@@ -33,7 +33,8 @@ def write_version_to_file(version, target_file):
 
 if __name__ == '__main__':
     version = '0.1.0+%s' % get_git_commit_number()
-    write_version_to_file(version, 'mtr/version.py')
+    # write_version_to_file(version, 'mtr/version.py')
+    write_version_to_file(version, 'mtrcore/version.py')
 
     setup(
         name='MotionTransformer',
@@ -49,7 +50,8 @@ if __name__ == '__main__':
         ext_modules=[
             make_cuda_ext(
                 name='knn_cuda',
-                module='mtr.ops.knn',
+                # module='mtr.ops.knn',
+                module='mtrcore.ops.knn',
                 sources=[
                     'src/knn.cpp',
                     'src/knn_gpu.cu',
@@ -58,7 +60,8 @@ if __name__ == '__main__':
             ),
             make_cuda_ext(
                 name='attention_cuda',
-                module='mtr.ops.attention',
+                # module='mtr.ops.attention',
+                module='mtrcore.ops.attention',
                 sources=[
                     'src/attention_api.cpp',
                     'src/attention_func_v2.cpp',

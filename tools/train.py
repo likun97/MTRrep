@@ -3,7 +3,7 @@
 # Written by Shaoshuai Shi 
 # All Rights Reserved
 
-import _init_path
+
 import argparse
 import datetime
 import glob
@@ -16,12 +16,12 @@ import torch.nn as nn
 import torch.optim.lr_scheduler as lr_sched
 from tensorboardX import SummaryWriter
 
-from mtr.datasets import build_dataloader
-from mtr.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_file
-from mtr.utils import common_utils
-from mtr.models import model as model_utils
+from mtrcore.datasets import build_dataloader
+from mtrcore.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_file
+from mtrcore.utils import common_utils
+from mtrcore.models import model as model_utils
 
-from train_utils.train_utils import train_model
+from train_utils import train_model
 
 
 def parse_config():
@@ -100,7 +100,9 @@ def build_scheduler(optimizer, dataloader, opt_cfg, total_epochs, total_iters_ea
         scheduler = lr_sched.LambdaLR(optimizer, lr_lbmd, last_epoch=last_epoch)
     elif opt_cfg.get('SCHEDULER', None) == 'linearLR':
         total_iters = total_iters_each_epoch * total_epochs
-        scheduler = lr_sched.LinearLR(optimizer, start_factor=1.0, end_factor=opt_cfg.LR_CLIP / opt_cfg.LR, total_iters=total_iters, last_epoch=last_epoch)
+        scheduler = lr_sched.LinearLR(
+            optimizer, start_factor=1.0, end_factor=opt_cfg.LR_CLIP / opt_cfg.LR, total_iters=total_iters, last_epoch=last_epoch
+        )
     else:
         scheduler = None
 
@@ -132,7 +134,7 @@ def main():
     if args.fix_random_seed:
         common_utils.set_random_seed(666)
 
-    output_dir = cfg.ROOT_DIR / 'output' / cfg.EXP_GROUP_PATH / cfg.TAG / args.extra_tag
+    output_dir = cfg.ROOT_DIR / 'TrainExpOut' / cfg.EXP_GROUP_PATH / cfg.TAG / args.extra_tag
     ckpt_dir = output_dir / 'ckpt'
     output_dir.mkdir(parents=True, exist_ok=True)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -165,6 +167,7 @@ def main():
         add_worker_init_fn=args.add_worker_init_fn,
     )
 
+
     model = model_utils.MotionTransformer(config=cfg.MODEL)
     if not args.without_sync_bn:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
@@ -175,13 +178,13 @@ def main():
     # load checkpoint if it is possible
     start_epoch = it = 0
     last_epoch = -1
-
     if args.pretrained_model is not None:
         model.load_params_from_file(filename=args.pretrained_model, to_cpu=dist_train, logger=logger)
 
     if args.ckpt is not None:
-        it, start_epoch = model.load_params_with_optimizer(args.ckpt, to_cpu=dist_train, optimizer=optimizer,
-                                                           logger=logger)
+        it, start_epoch = model.load_params_with_optimizer(
+            args.ckpt, to_cpu=dist_train, optimizer=optimizer, logger=logger
+        )
         last_epoch = start_epoch + 1
     else:
         ckpt_list = glob.glob(str(ckpt_dir / '*.pth'))
@@ -208,9 +211,10 @@ def main():
     )
 
     model.train()  # before wrap to DistributedDataParallel to support to fix some parameters
-
     if dist_train:
-        model = nn.parallel.DistributedDataParallel(model, device_ids=[cfg.LOCAL_RANK % torch.cuda.device_count()], find_unused_parameters=True)
+        model = nn.parallel.DistributedDataParallel(
+            model, device_ids=[cfg.LOCAL_RANK % torch.cuda.device_count()], find_unused_parameters=True
+        )
     logger.info(model)
     num_total_params = sum([x.numel() for x in model.parameters()])
     logger.info(f'Total number of parameters: {num_total_params}')
@@ -224,9 +228,12 @@ def main():
     eval_output_dir = output_dir / 'eval' / 'eval_with_train'
     eval_output_dir.mkdir(parents=True, exist_ok=True)
 
+
+
     # -----------------------start training---------------------------
     logger.info('**********************Start training %s/%s(%s)**********************'
                 % (cfg.EXP_GROUP_PATH, cfg.TAG, args.extra_tag))
+
     train_model(
         model,
         optimizer,
