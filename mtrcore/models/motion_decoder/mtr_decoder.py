@@ -426,7 +426,7 @@ class MTRDecoder(nn.Module):
         # define input
         intention_query, intention_points         = self.get_motion_query(center_objects_type) # (load pkl file)
         query_content                             = torch.zeros_like(intention_query)
-        self.forward_ret_dict['intention_points'] = intention_points.permute(1, 0, 2) # (num_center_objects, num_query=64, 2)
+        self.forward_ret_dict['intention_points'] = intention_points.permute(1, 0, 2) # (num_center_objects, num_query=64, 2)  ->> for calculate following decoder_loss
 
         base_map_idxs = None
         pred_waypoints = intention_points.permute(1, 0, 2)[:, :, None, :]  # [MotionQueryPair-> I(Kx2)] ; (num_center_objects, num_query=64, 1, 2)   
@@ -490,7 +490,7 @@ class MTRDecoder(nn.Module):
             
             query_content = \
                 self.query_feature_fusion_layers[layer_idx](
-                    query_feature.flatten(start_dim=0, end_dim=1)   # [Nq*Ni, 1280] 
+                    query_feature.flatten(start_dim=0, end_dim=1)   # query_feature.flatten(start_dim=0, end_dim=1)  ->[Nq*Ni, 1280] 
                 ).view(num_query, num_center_objects, -1)           # [Nq, Ni, 512] 
 
             # motion prediction [(query_content --->GMM_Prediction--->   pred_trajs)]
@@ -507,8 +507,8 @@ class MTRDecoder(nn.Module):
             pred_list.append([pred_scores, pred_trajs])
 
             # update
-            pred_waypoints = pred_trajs[:, :, :, 0:2]
-            dynamic_query_center = pred_trajs[:, :, -1, 0:2].contiguous().permute(1, 0, 2)  # (num_query, num_center_objects, 2)
+            pred_waypoints = pred_trajs[:, :, :, 0:2] # (Nq, Ni, 1, 2) 
+            dynamic_query_center = pred_trajs[:, :, -1, 0:2].contiguous().permute(1, 0, 2) # (Nq, Ni, 2) (num_query, num_center_objects, 2)
 
         if self.use_place_holder: raise NotImplementedError
         assert len(pred_list) == self.num_decoder_layers
@@ -603,14 +603,14 @@ class MTRDecoder(nn.Module):
         assert center_gt_trajs.shape[-1] == 4
 
         pred_list = self.forward_ret_dict['pred_list']
-        intention_points = self.forward_ret_dict['intention_points']  # (num_center_objects, num_query, 2)
-
+        intention_points   = self.forward_ret_dict['intention_points']  # (num_center_objects, num_query, 2)
+        
+        # 得到center_gt_positive_idx, 表示离真实轨迹的终点最近的static intention point对应的一条轨迹
         num_center_objects = center_gt_trajs.shape[0]
-        center_gt_goals = center_gt_trajs[torch.arange(num_center_objects), center_gt_final_valid_idx, 0:2]  # (num_center_objects, 2)
-
+        center_gt_goals    = center_gt_trajs[torch.arange(num_center_objects), center_gt_final_valid_idx, 0:2]  # (num_center_objects, 2) (Ni, 2)
         if not self.use_place_holder:
-            dist = (center_gt_goals[:, None, :] - intention_points).norm(dim=-1)  # (num_center_objects, num_query)
-            center_gt_positive_idx = dist.argmin(dim=-1)  # (num_center_objects)
+            dist = (center_gt_goals[:, None, :] - intention_points).norm(dim=-1)  # (num_center_objects, num_query) (Ni, Nq)
+            center_gt_positive_idx = dist.argmin(dim=-1)  # (num_center_objects) Ni
         else:
             raise NotImplementedError
 

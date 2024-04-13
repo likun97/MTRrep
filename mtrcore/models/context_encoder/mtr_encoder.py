@@ -23,17 +23,17 @@ class MTREncoder(nn.Module):
 
         # build polyline encoders
         self.agent_polyline_encoder = self.build_polyline_encoder(
-            in_channels=self.model_cfg.NUM_INPUT_ATTR_AGENT + 1,
-            hidden_dim=self.model_cfg.NUM_CHANNEL_IN_MLP_AGENT,
-            num_layers=self.model_cfg.NUM_LAYER_IN_MLP_AGENT,
-            out_channels=self.model_cfg.D_MODEL
+            in_channels = self.model_cfg.NUM_INPUT_ATTR_AGENT + 1,  #29+1
+            hidden_dim  = self.model_cfg.NUM_CHANNEL_IN_MLP_AGENT,  #256
+            num_layers  = self.model_cfg.NUM_LAYER_IN_MLP_AGENT,    #3
+            out_channels= self.model_cfg.D_MODEL                    #256
         )
         self.map_polyline_encoder   = self.build_polyline_encoder(
-            in_channels=self.model_cfg.NUM_INPUT_ATTR_MAP,
-            hidden_dim=self.model_cfg.NUM_CHANNEL_IN_MLP_MAP,
-            num_layers=self.model_cfg.NUM_LAYER_IN_MLP_MAP,
-            num_pre_layers=self.model_cfg.NUM_LAYER_IN_PRE_MLP_MAP,
-            out_channels=self.model_cfg.D_MODEL
+            in_channels    = self.model_cfg.NUM_INPUT_ATTR_MAP,     #9
+            hidden_dim     = self.model_cfg.NUM_CHANNEL_IN_MLP_MAP, #64
+            num_layers     = self.model_cfg.NUM_LAYER_IN_MLP_MAP,   #5
+            num_pre_layers = self.model_cfg.NUM_LAYER_IN_PRE_MLP_MAP,   #3
+            out_channels   = self.model_cfg.D_MODEL                 #256
         )
 
         # build transformer encoder layers
@@ -172,34 +172,33 @@ class MTREncoder(nn.Module):
         """
         input_dict = batch_dict['input_dict']
         
-        obj_trajs      = input_dict['obj_trajs'].cuda()                     # torch.Size([7, 17,  11, 29]) (num_center_objects, num_objects, num_timestamps, NUM_INPUT_ATTR_AGENT)
-        obj_trajs_mask = input_dict['obj_trajs_mask'].cuda()                # torch.Size([7, 17,  11,])    (num_center_objects, num_objects, num_timestamps, )
-        map_polylines      = input_dict['map_polylines'].cuda()             # torch.Size([7, 768, 20, 9])  (num_center_objects, NUM_OF_SRC_POLYLINES, NUM_POINTS_EACH_POLYLINE, NUM_INPUT_ATTR_MAP)
-        map_polylines_mask = input_dict['map_polylines_mask'].cuda()        # torch.Size([7, 768, 20,])    (num_center_objects, NUM_OF_SRC_POLYLINES, NUM_POINTS_EACH_POLYLINE)
+        obj_trajs      = input_dict['obj_trajs'].cuda()                     # torch.Size([Ni, Nobj,  11, 29])    (num_center_objects, num_objects, num_timestamps, NUM_INPUT_ATTR_AGENT)
+        obj_trajs_mask = input_dict['obj_trajs_mask'].cuda()                # torch.Size([Ni, Nobj,  11,])       (num_center_objects, num_objects, num_timestamps, )
+        map_polylines      = input_dict['map_polylines'].cuda()             # torch.Size([Ni, Npolyline, 20, 9]) (num_center_objects, num_polylines, NUM_POINTS_EACH_POLYLINE, NUM_INPUT_ATTR_MAP)
+        map_polylines_mask = input_dict['map_polylines_mask'].cuda()        # torch.Size([Ni, Npolyline, 20,])   (num_center_objects, num_polylines, NUM_POINTS_EACH_POLYLINE)
+        obj_trajs_last_pos     = input_dict['obj_trajs_last_pos'].cuda()    # torch.Size([Ni, Nobj, 3,])  
+        map_polylines_center   = input_dict['map_polylines_center'].cuda()  # torch.Size([Ni, Npolyline, 3,])  
+        track_index_to_predict = input_dict['track_index_to_predict']       # torch.Size([Ni])
 
-        obj_trajs_last_pos     = input_dict['obj_trajs_last_pos'].cuda()    # torch.Size([7, 17, 3,])  
-        map_polylines_center   = input_dict['map_polylines_center'].cuda()  # torch.Size([7, 768, 3,])  
-        track_index_to_predict = input_dict['track_index_to_predict']       # torch.Size([7])
-
+        # num_polylines =Npolyline =  NUM_POINTS_EACH_POLYLINE = 768(config)
         assert obj_trajs_mask.dtype == torch.bool and map_polylines_mask.dtype == torch.bool
 
         num_center_objects, num_objects,   num_timestamps, _ = obj_trajs.shape
         _,                  num_polylines,  _,             _ = map_polylines.shape
-        # num_polylines = map_polylines.shape[1]
 
         # apply polyline encoder
-        obj_trajs_in = torch.cat((obj_trajs, obj_trajs_mask[:, :, :, None].type_as(obj_trajs)), dim=-1) # torch.Size([7, 17, 11, 30]) (num_center_objects, num_objects, num_timestamps, NUM_INPUT_ATTR_AGENT+1)
-        obj_polylines_feature = self.agent_polyline_encoder(obj_trajs_in, obj_trajs_mask)               # torch.Size([7, 17, 256])    (num_center_objects, num_objects, C)
-        map_polylines_feature = self.map_polyline_encoder(map_polylines, map_polylines_mask)            # torch.Size([7, 768, 256])   (num_center_objects, num_polylines, C)
+        obj_trajs_in = torch.cat((obj_trajs, obj_trajs_mask[:, :, :, None].type_as(obj_trajs)), dim=-1) # torch.Size([Ni, Nobj, 11, 30]) (num_center_objects, num_objects, num_timestamps, NUM_INPUT_ATTR_AGENT+1)
+        obj_polylines_feature = self.agent_polyline_encoder(obj_trajs_in, obj_trajs_mask)               # torch.Size([Ni, Nobj, 256])    (num_center_objects, num_objects, C)
+        map_polylines_feature = self.map_polyline_encoder(map_polylines, map_polylines_mask)            # torch.Size([Ni, Npolyline, 256])   (num_center_objects, num_polylines, C)
 
         # apply self-attn
-        obj_valid_mask = (obj_trajs_mask.sum(dim=-1) > 0)                                               # torch.Size([7, 17]  (num_center_objects, num_objects)
-        map_valid_mask = (map_polylines_mask.sum(dim=-1) > 0)                                           # torch.Size([7, 768] (num_center_objects, NUM_OF_SRC_POLYLINES)
+        obj_valid_mask = (obj_trajs_mask.sum(dim=-1) > 0)                                               # torch.Size([Ni, Nobj]  (num_center_objects, num_objects)
+        map_valid_mask = (map_polylines_mask.sum(dim=-1) > 0)                                           # torch.Size([Ni, Npolyline] (num_center_objects, NUM_OF_SRC_POLYLINES)
 
         # cat()
-        global_token_feature = torch.cat((obj_polylines_feature, map_polylines_feature), dim=1)         # torch.Size([7, 785, 256]) 
-        global_token_mask    = torch.cat((obj_valid_mask, map_valid_mask), dim=1)                       # torch.Size([7, 785])
-        global_token_pos     = torch.cat((obj_trajs_last_pos, map_polylines_center), dim=1)             # torch.Size([7, 785, 3])
+        global_token_feature = torch.cat((obj_polylines_feature, map_polylines_feature), dim=1)         # torch.Size([Ni, Nobj+Npolyline=785, 256]) 
+        global_token_mask    = torch.cat((obj_valid_mask, map_valid_mask), dim=1)                       # torch.Size([Ni, Nobj+Npolyline=785])
+        global_token_pos     = torch.cat((obj_trajs_last_pos, map_polylines_center), dim=1)             # torch.Size([Ni, Nobj+Npolyline=785, 3])
 
         if self.use_local_attn:
             global_token_feature = self.apply_local_attn(
@@ -213,11 +212,11 @@ class MTREncoder(nn.Module):
                 x      = global_token_feature,
                 x_mask = global_token_mask,
                 x_pos  = global_token_pos,
-            )                                                                                           # global_token_feature torch.Size([7, 785, 256])
+            ) # torch.Size([Ni, Nobj+Npolyline=785, 256]) 
 
         # split()
-        obj_polylines_feature = global_token_feature[:, :num_objects]                                   # torch.Size([7, 17, 256])
-        map_polylines_feature = global_token_feature[:, num_objects:]                                   # torch.Size([7, 768, 256])
+        obj_polylines_feature = global_token_feature[:, :num_objects]                                   # torch.Size([Ni, Nobj, 256])
+        map_polylines_feature = global_token_feature[:, num_objects:]                                   # torch.Size([Ni, Npolyline, 256])
         assert map_polylines_feature.shape[1] == num_polylines
 
         # organize return features
@@ -235,57 +234,9 @@ class MTREncoder(nn.Module):
         return batch_dict
 
 """ 
-num_center_objects, num_objects [7, 17] 会变化
+num_center_objects, num_objects [Ni, Nobj] 会变化
 
 obj_trajs_last_pos = obj_trajs[:, :, -1, 0:3] 对应是obj_trajs历史轨迹最后时间帧对应的pos
 
 map_polylines中 NUM_OF_SRC_POLYLINES=768 是当前Batch下距离num_center_objects最近的768条polyline ---> def create_map_data_for_center_objects() in waymo_dataset.py
-
-
-input_dict['obj_trajs'].shape               torch.Size([7, 17, 11, 29])     [num_center_objects, num_objects, num_timestamps, NUM_INPUT_ATTR_AGENT ]
-                                                                            17个object, 7个center_object
-                                                                            
-input_dict['obj_trajs_mask'].shape          torch.Size([7, 17, 11])         [num_center_objects, num_objects, num_timestamps ]
-                                                                            是否valid
-                                                                            
-input_dict['map_polylines'].shape           torch.Size([7, 768, 20, 9])     [num_center_objects, NUM_OF_SRC_POLYLINES, NUM_POINTS_EACH_POLYLINE, NUM_INPUT_ATTR_MAP ]
-
-input_dict['map_polylines_mask'].shape      torch.Size([7, 768, 20])        [num_center_objects, NUM_OF_SRC_POLYLINES, NUM_POINTS_EACH_POLYLINE ]
-
-input_dict['obj_trajs_last_pos'].shape      torch.Size([7, 17, 3])          [num_center_objects, num_objects, 3]                                   
-input_dict['map_polylines_center'].shape    torch.Size([7, 768, 3])         [num_center_objects, NUM_OF_SRC_POLYLINES, 3]
-input_dict['track_index_to_predict'].shape  torch.Size([7])                 [num_center_objects]
-
-input_dict['scenario_id'].shape
-input_dict['obj_trajs_pos'].shape
-input_dict['obj_types'].shape
-input_dict['obj_ids'].shape
-input_dict['center_objects_world'].shape
-...
-
-see. MTR/mtr/datasets/dataset.py
-        Args:
-        batch_list:
-            scenario_id: (num_center_objects)
-            track_index_to_predict (num_center_objects):
-
-            obj_trajs                   (num_center_objects, num_objects, num_timestamps, num_attrs):
-            obj_trajs_mask              (num_center_objects, num_objects, num_timestamps):
-            map_polylines               (num_center_objects, num_polylines, num_points_each_polyline, 9): [x, y, z, dir_x, dir_y, dir_z, global_type, pre_x, pre_y]
-            map_polylines_mask          (num_center_objects, num_polylines, num_points_each_polyline)
-
-            obj_trajs_pos:              (num_center_objects, num_objects, num_timestamps, 3)
-            obj_trajs_last_pos:         (num_center_objects, num_objects, 3)
-            obj_types:                  (num_objects)
-            obj_ids:                    (num_objects)
-
-            center_objects_world:       (num_center_objects, 10)  [cx, cy, cz, dx, dy, dz, heading, vel_x, vel_y, valid]
-            center_objects_type:        (num_center_objects)
-            center_objects_id:          (num_center_objects)
-
-            obj_trajs_future_state      (num_center_objects, num_objects, num_future_timestamps, 4): [x, y, vx, vy]
-            obj_trajs_future_mask       (num_center_objects, num_objects, num_future_timestamps):
-            center_gt_trajs             (num_center_objects, num_future_timestamps, 4): [x, y, vx, vy]
-            center_gt_trajs_mask        (num_center_objects, num_future_timestamps):
-            center_gt_final_valid_idx   (num_center_objects): the final valid timestamp in num_future_timestamps
 """
